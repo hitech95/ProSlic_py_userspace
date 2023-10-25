@@ -15,22 +15,30 @@ CHANNEL_IDs = [
 ]
 
 # Known OP codes
-
-
 class ProSLIC_OpCodes(Enum):
     CHANNEL_RD = 0x60
     CHANNEL_WR = 0x20
-    BCAST = 0x80
+    BCAST      = 0x80
 
-
+# Known Registers that *should* be shared between devices
 class ProSLIC_CommonREGs(Enum):
-    ID = 0
-    MSTRSTAT = 3
-    RAM_STAT = 4
-    RAM_HI = 5
-    RAM_D0 = 6
-    RAM_D1 = 7
-    RAM_D2 = 8
-    RAM_D3 = 9
-    RAM_LO = 10
-    JMPEN = 0x51
+    ID       = 0
+    MSTRSTAT = 0x3
+    RAM_STAT = 0x4
+    RAM_HI   = 0x5
+    RAM_D0   = 0x6
+    RAM_D1   = 0x7
+    RAM_D2   = 0x8
+    RAM_D3   = 0x9
+    RAM_LO   = 0xA
+    JMPEN    = 0x51
+    JMP0LO   = 0x52
+    JMP0HI   = 0x53
+
+# Known RAM Addrs that *should* be shared between devices
+class ProSLIC_CommonRamAddrs(Enum):
+    BLOB_ID = 0x1C0
+    TEST_IO = 0x1C1
+    BLOB_DATA_ADDR  = 1358
+    BLOB_DATA_DATA  = 1359
+    BLOB_JMP_TABLE2 = 0x63D

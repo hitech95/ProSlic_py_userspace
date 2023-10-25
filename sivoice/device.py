@@ -3,7 +3,7 @@ from time import sleep
 from utils.spi_device import SPIDevice
 from utils.gpio_manager import GPIOManager
 
-from .resources import ProSLIC_OpCodes, ProSLIC_CommonREGs, PROSLIC_RETRIES, CHANNEL_IDs, PROSLIC_PROTO_OP_BYTE, PROSLIC_PROTO_REG_BYTE
+from .resources import ProSLIC_CommonRamAddrs, ProSLIC_OpCodes, ProSLIC_CommonREGs, PROSLIC_RETRIES, CHANNEL_IDs, PROSLIC_PROTO_OP_BYTE, PROSLIC_PROTO_REG_BYTE
 
 
 class SiDevice(SPIDevice):
@@ -20,24 +20,20 @@ class SiDevice(SPIDevice):
 
     def setup(self):
         try:
-            print("SiDummy - opening SPI bus")
             self._open()
 
-            print("SiDummy - configuring gpios")
             self.gpioManager._setup()
             self.gpioManager.setReset(False)
             self.delay(200)
 
             # Disable reset
-            print("SiDummy - releasing reset")
             # print(self.gpioManager)
             self.gpioManager.setReset(True)
             self.delay(400)
-            print("SiDummy - setup done")
 
             return 0
         except Exception as e:
-            print("SiDummy - Exception while opening")
+            print("Exception while opening")
             print(e)
             return -1
 
@@ -180,128 +176,98 @@ class SiDevice(SPIDevice):
     #  more analysis is needed!
     def loadBlob(self, blob):
         channel = 0
+        print(f"Attempting to load blob with ID:{hex(blob.id)}")
+
         # Before blob data
+        data = self.readRegister(channel, 0x7E)
+        print(f"Read register 0x7E with value {hex(data)} ")
+
+        # Assuming we have to pass value just read?
+        self.writeRegister(channel, 0x7E, 0x02)
+        self.writeRegister(channel, 0x7E, 0x08)
+        self.writeRegister(channel, 0x7E, 0x0E)
+        self.writeRegister(channel, 0x7E, 0x00)
 
         # Disable blob?
         self.writeRegister(channel, ProSLIC_CommonREGs.JMPEN.value, 0x00)
+        print(f"Disabled JMP, no fw now?")
 
         # Unconfigure JMP stuff
-        self.writeRegister(channel, ProSLIC_CommonREGs.JMP0LO.value, 0x00)
-        self.writeRegister(channel, ProSLIC_CommonREGs.JMP0HI.value, 0x00)
-        self.writeRegister(channel, ProSLIC_CommonREGs.JMP1LO.value, 0x00)
-        self.writeRegister(channel, ProSLIC_CommonREGs.JMP1HI.value, 0x00)
-        self.writeRegister(channel, ProSLIC_CommonREGs.JMP2LO.value, 0x00)
-        self.writeRegister(channel, ProSLIC_CommonREGs.JMP2HI.value, 0x00)
-        self.writeRegister(channel, ProSLIC_CommonREGs.JMP3LO.value, 0x00)
-        self.writeRegister(channel, ProSLIC_CommonREGs.JMP3HI.value, 0x00)
-        self.writeRegister(channel, ProSLIC_CommonREGs.JMP4LO.value, 0x00)
-        self.writeRegister(channel, ProSLIC_CommonREGs.JMP4HI.value, 0x00)
-        self.writeRegister(channel, ProSLIC_CommonREGs.JMP5LO.value, 0x00)
-        self.writeRegister(channel, ProSLIC_CommonREGs.JMP5HI.value, 0x00)
-        self.writeRegister(channel, ProSLIC_CommonREGs.JMP6LO.value, 0x00)
-        self.writeRegister(channel, ProSLIC_CommonREGs.JMP6HI.value, 0x00)
-        self.writeRegister(channel, ProSLIC_CommonREGs.JMP7LO.value, 0x00)
-        self.writeRegister(channel, ProSLIC_CommonREGs.JMP7HI.value, 0x00)
-
-        # More unknown stuff this is recofigured later
-        # | RAM-WRITE |    X    |                |  0x63d   |    0x0     |
-        # | RAM-WRITE |    X    |                |  0x63e   |    0x0     |
-        # | RAM-WRITE |    X    |                |  0x63f   |    0x0     |
-        # | RAM-WRITE |    X    |                |  0x640   |    0x0     |
-        # | RAM-WRITE |    X    |                |  0x641   |    0x0     |
-        # | RAM-WRITE |    X    |                |  0x642   |    0x0     |
-        # | RAM-WRITE |    X    |                |  0x643   |    0x0     |
-        # | RAM-WRITE |    X    |                |  0x644   |    0x0     |
+        # We dont know the logic, so add a reset table in the blob
+        self.configureJMPBlob(channel, [0] * 16, [0] * 8)
+        print(f"rst JMP, no fw now?")
 
         # Send the actual blob of data
-        self.loadBlobData(blob)
+        self.loadBlobData(channel, blob.data)
+        print(f"blob data loaded")
 
         # Reconfigure JMP stuff
-        self.writeRegister(channel, ProSLIC_CommonREGs.JMP0LO.value, 0xb6)
-        self.writeRegister(channel, ProSLIC_CommonREGs.JMP0HI.value, 0x03)
-        self.writeRegister(channel, ProSLIC_CommonREGs.JMP1LO.value, 0xa6)
-        self.writeRegister(channel, ProSLIC_CommonREGs.JMP1HI.value, 0x0f)
-        self.writeRegister(channel, ProSLIC_CommonREGs.JMP2LO.value, 0xbf)
-        self.writeRegister(channel, ProSLIC_CommonREGs.JMP2HI.value, 0x10)
-        self.writeRegister(channel, ProSLIC_CommonREGs.JMP3LO.value, 0x75)
-        self.writeRegister(channel, ProSLIC_CommonREGs.JMP3HI.value, 0x11)
-        self.writeRegister(channel, ProSLIC_CommonREGs.JMP4LO.value, 0x59)
-        self.writeRegister(channel, ProSLIC_CommonREGs.JMP4HI.value, 0x07)
-        self.writeRegister(channel, ProSLIC_CommonREGs.JMP5LO.value, 0xb8)
-        self.writeRegister(channel, ProSLIC_CommonREGs.JMP5HI.value, 0x06)
-        self.writeRegister(channel, ProSLIC_CommonREGs.JMP6LO.value, 0x23)
-        self.writeRegister(channel, ProSLIC_CommonREGs.JMP6HI.value, 0x05)
-        self.writeRegister(channel, ProSLIC_CommonREGs.JMP7LO.value, 0xa7)
-        self.writeRegister(channel, ProSLIC_CommonREGs.JMP7HI.value, 0x11)
+        self.configureJMPBlob(channel, blob.regJMPTable, blob.ramJMPTable)
+        print(f"blob JMP tables loaded")
 
-        # More unknown stuff
-        # | RAM-WRITE |    X    |                |  0x63d   |   0x10fb   |
-        # | RAM-WRITE |    X    |                |  0x63e   |   0x591    |
-        # | RAM-WRITE |    X    |                |  0x63f   |   0x543    |
-        # | RAM-WRITE |    X    |                |  0x640   |    0x4     |
-        # | RAM-WRITE |    X    |                |  0x641   |    0xc     |
-        # | RAM-WRITE |    X    |                |  0x642   |   0xff1    |
-        # | RAM-WRITE |    X    |                |  0x643   |   0x1247   |
-        # | RAM-WRITE |    X    |                |  0x644   |    0x0     |
 
         # IDK blob ID or something? Not shared between the chan0 or chan1
         # Not shared with previous JMP disable/unconfigure
-        # FIXME - HARDCODED ADDRESS
-        self.writeRam(channel, 0x1c0, 0x5262017)
+        self.writeRam(channel, ProSLIC_CommonRamAddrs.BLOB_ID.value, blob.id)
+        print(f"blob ID loaded")
 
         # Next step is shared between chan0 and chan1
-        # | RAM-WRITE |    X    |                |  0x320   |  0x200000  |
-        # | RAM-WRITE |    X    |                |  0x2b6   |  0x80000   |
-        # | RAM-WRITE |    X    |                |  0x2b7   |  0x200000  |
-        # | RAM-WRITE |    X    |                |  0x31b   |  0x180000  |
-        # | RAM-WRITE |    X    |                |  0x392   | 0x7fcfdda  |
-        # | RAM-WRITE |    X    |                |  0x37c   |  0x400000  |
-        # | RAM-WRITE |    X    |                |  0x37d   |    0x0     |
-        # | RAM-WRITE |    X    |                |  0x14d   |    0x0     |
-        # | RAM-WRITE |    X    |                |  0x14e   |    0x0     |
-        # | RAM-WRITE |    X    |                |  0x160   |    0x0     |
-        # | RAM-WRITE |    X    |                |   0xe2   |  0x35d540  |
-        # | RAM-WRITE |    X    |                |  0x1b0   |    0x0     |
-        # | RAM-WRITE |    X    |                |  0x1b1   |    0x0     |
-        # | RAM-WRITE |    X    |                |  0x1b2   |    0x0     |
-        # | RAM-WRITE |    X    |                |  0x1b5   |    0x0     |
-        # | RAM-WRITE |    X    |                |  0x1c2   |    0x0     |
+        self.configureBlob(channel, blob.configuration)
+        print(f"blob configuration")
 
         # Verify if the blob has all been sent correctly
-        self.verifyBlobData(channel, blob)
+        if not self.verifyBlobData(channel, blob.data):
+            print("Blob write failed! How can we signal this?, invalidating ID?")
+            return -1
+        
+        # TODO - More stuff to check later
+        # verify JMP table
+        # verify Blob configuration
 
         # Enable blob (finally)?
         self.writeRegister(channel, ProSLIC_CommonREGs.JMPEN.value, 0x01)
+        print(f"blob enabled")
 
         pass
+
+    def configureJMPBlob(self, channel, regJMPs, ramJMPs):
+        # Iterate through the configuration and configure the registers
+        for idx, value in enumerate(regJMPs):
+            self.writeRegister(channel, ProSLIC_CommonREGs.JMP0LO.value + idx, value)
+
+        # More unknown stuff but *seems* related to JMP regs
+        # Iterate through the configuration and configure the registers
+        for idx, value in enumerate(ramJMPs):
+            self.writeRam(
+                channel, ProSLIC_CommonRamAddrs.BLOB_JMP_TABLE2.value + idx, value)
 
     def configureBlob(self, channel, configuration):
-        pass
+        # Iterate through the configuration and configure the registers
+        for reg, value in configuration.items():
+            self.writeRam(channel, reg, value)
 
-    def loadBlobData(self, channel, blob):
-        if blob.length == 0:
+    def loadBlobData(self, channel, blobData):
+        if len(blobData) == 0:
+            # Throw some sort of exception here!?
             return False
 
         # We suppose this is a auto increment register
-        # if we read it after each write it get auti-incremented.
+        # if we read it after each write it get auto-incremented.
+        self.writeRam(
+            channel, ProSLIC_CommonRamAddrs.BLOB_DATA_ADDR.value, 0x00)
 
-        # FIXME - Hardcoded address?
-        # RAM_LOAD_ADDDRESS
-        self.writeRam(channel, 0x54e, 0x00)
-
-        for data in blob:
-            # FIXME - Hardcoded address?
-            # RAM_LOAD_DATA
-            self.writeRam(channel, 0x54f, data)
+        for data in blobData:
+            self.writeRam(
+                channel, ProSLIC_CommonRamAddrs.BLOB_DATA_DATA.value, data)
 
         # Signaling write completed
-        self.writeRegister(channel, ProSLIC_CommonREGs.RAM_HI, 0x00)
+        self.writeRegister(channel, ProSLIC_CommonREGs.RAM_HI.value, 0x00)
 
     def verifyBlobData(self, channel,  blob):
         correct = True
 
         # No patch to verify return OK?
-        if blob.length == 0:
+        if len(blob) == 0:
             return correct
 
         # Disable blob (before reading)?
@@ -309,25 +275,24 @@ class SiDevice(SPIDevice):
 
         # FIXME - Hardcoded address?
         # RAM_LOAD_ADDDRESS
-        self.writeRam(channel, 0x54e, 0x00)
+        self.writeRam(
+            channel, ProSLIC_CommonRamAddrs.BLOB_DATA_ADDR.value, 0x00)
 
         for data in blob:
             # FIXME - Hardcoded address?
             # RAM_LOAD_DATA
-            readData = self.readRam(channel, 0x54f)
+            readData = self.readRam(
+                channel, ProSLIC_CommonRamAddrs.BLOB_DATA_DATA.value)
             if readData != data:
                 correct = False
                 break
 
+        # Signaling write completed
+        self.writeRegister(channel, ProSLIC_CommonREGs.RAM_HI.value, 0x00)
+
         # Do we have to do something if the blob is wrong?
         if not correct:
             pass
-
-        # Signaling write completed
-        self.writeRegister(channel, ProSLIC_CommonREGs.RAM_HI, 0x00)
-
-        # TODO - More stuff to check later
-        # check JMP settings and more RAM stuff
 
         return correct
 
