@@ -1,44 +1,74 @@
-from time import sleep
-from sivoice.codecs.dummy import SiDummy
-from sivoice.patches.patch_si32282 import Si32282Blob
-from utils.spi_device import SPIDevice
-# asd
-print("hello!")
+#!/usr/bin/env python3
+import logging
+import signal
+import traceback
 
-# print("testing SPIDevice class...")
-# busDevice = SPIDevice(1, 0, 3)
-# busDevice._open()
-# busDevice.write([0x60, 0x00])
-# readed = busDevice.read(2)
-# print(readed)
-# print(f"we have readed: {hex(readed[0])}")
+# from ringer import Ringer
+from config import Config
+from manager import PhoneManager
+from cli import PhoneCLI
 
-# GPIO 25 (reset)
-# BUS 1, Device 0, SPI MODE 3
-print("starting SiDummy!")
-dummyDevice = SiDummy(25, 1, 0, 3)
-if dummyDevice.setup() < 0:
-    print("Error occourred!")
-    exit()
+# Device node
+DEVICE = "/dev/proslic"
 
-count = dummyDevice.getChannelCount()
-print(f"Found {count} channels")
+cli = None
 
-print("Waiting for Tests... testing chan 0")
-sleep(2)
-if dummyDevice.testSPI(0):
-    print("Test SPI: OK")
-else:
-    print("Test SPI: ERR")
-sleep(1)
-if dummyDevice.testRAM(0):
-    print("Test RAM: OK")
-else:
-    print("Test RAM: ERR")
+# Basic configuration
+logging.basicConfig(
+    level=logging.DEBUG,  # Set to DEBUG for more verbosity
+    # format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    format="[%(levelname)s] %(name)s: %(message)s",
+    # handlers=[
+    #     logging.StreamHandler(),  # Log to console
+    #     # logging.FileHandler("myapp.log")  # Also log to file
+    # ]
+)
 
-blob = Si32282Blob()
-dummyDevice.loadBlob(blob)
+def signal_handler(sig, frame):
+    global cli
 
-dummyDevice.close()
+    print("\nCtrl+C (SIGINT) caught, stopping...")
+    if cli:
+        cli.do_exit(None)
 
-print("done!")
+def begin():
+    global cli
+
+    config = Config()
+    logger = logging.getLogger(__name__)
+    logger.debug("begin()")
+
+    with open(DEVICE, "r+b", buffering=0) as devfile:
+        devices = config.begin()
+
+        if not devices:
+            return
+        
+        logger.debug(f"Device paths: {devices}")
+        pm = PhoneManager(config, devfile)
+        try:
+            logger.info("Starting PhoneManager...")
+            if not pm.begin(devices):
+                logger.critical(f"Unable to initialize PhoneManager")
+                return
+            
+            logger.info(f"PhoneManager Initialized with {pm.getChannelCount()} channels")
+
+            cli = PhoneCLI(pm)
+            cli.cmdloop()
+
+            logger.error(f"[Main] before cleanup")
+
+        except Exception as e:
+            logger.error(f"[Main] Error during work: {e}")
+            traceback.print_exc()
+        finally:
+            # Cleanup
+            logger.error(f"[Main] cleanup")
+            pm.close()
+            logging.shutdown()
+        return
+
+if __name__ == "__main__":
+    signal.signal(signal.SIGINT, signal_handler)
+    begin()

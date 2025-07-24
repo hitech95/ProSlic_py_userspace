@@ -1,5 +1,12 @@
-from sivoice.resources import ProSLIC_CommonREGs
+from dataclasses import dataclass
 
+from statuses import LineTermination
+
+@dataclass
+class OptionData:
+    type: str  # "RAM" or "REGISTER"
+    address: int
+    value: int
 
 class Si32282Blob:
 
@@ -450,3 +457,16 @@ class Si32282Blob:
         0x1b5: 0x0,
         0x1c2: 0x0,
     }
+
+    # This is the data for Zsynth
+    # We only have TBR21 values, have to get other data from Ghidra
+
+    lineImpedance = {
+        LineTermination.FCC: {
+        },
+        LineTermination.TBR21: {
+        },
+    }
+
+
+

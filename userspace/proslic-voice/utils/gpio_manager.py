@@ -1,75 +1,90 @@
-import time
+import select
+import os
 import traceback
 import threading
-
+import logging
 import gpiod
+from gpiod.line import Edge
 
+def edge_type_str(event):
+    if event.event_type is event.Type.RISING_EDGE:
+        return "Rising"
+    if event.event_type is event.Type.FALLING_EDGE:
+        return "Falling"
+    return "Unknown"
 
 class GPIOManager(object):
-    def __init__(self, name, reset_pin, irq_pin=-1):
-        print("GPIOManager.__init__")
+    def __init__(self, path, irq_pin, interrupt_event):
+        self.logger = logging.getLogger("GPIOManager")
+        self.logger.debug("__init__")
+
+        # Threading event
+        self.interrupt_event = interrupt_event
 
         # Default states
-        self.name = name
-        self.irq_callback = None
+        self.irq_thread = None
         self.reset_state = False
 
-        # Open the GPIO chip
-        chip = gpiod.Chip("gpiochip0")
-        self.reset_gpio = chip.get_line(reset_pin)
-
         # Setup the IRQ GPIO if provided
-        self.irq_gpio = None
-        if irq_pin != -1:
-            self.irq_gpio = chip.get_line(irq_pin)
-
-        # Thread signaling
-        self.stop_event = threading.Event()
+        self.irq_gpio = gpiod.request_lines(
+            path, 
+            consumer="GPIOManager",
+            config={
+                irq_pin: gpiod.LineSettings(edge_detection=Edge.FALLING)
+            }
+        )
 
     def __str__(self):
         return f"GPIOManager(name={self.name})"
 
-    def _setup(self):
+    def setup(self):
+        self.logger.debug("setup()")
         try:
-            # Setup the reset GPIO as an output, initially low
-            self.reset_gpio.request(
-                consumer=self.name, type=gpiod.LINE_REQ_DIR_OUT)
-            # self.reset_gpio.set_value(0)
+            # gpiod C bindings thread signaling
+            self.done_fd = os.eventfd(0)
 
-            # Setup the IRQ GPIO if provided
-            if self.irq_gpio != None:
-                self.irq_gpio.request(consumer=self.name,
-                                      type=gpiod.LINE_REQ_EV_FALLING_EDGE)
-                self.irq_callback = threading.Thread(target=self.callback_irq)
-                self.irq_callback.start()
+            self.poll = select.poll()
+            self.poll.register(self.irq_gpio.fd, select.POLLIN)
+            self.poll.register(self.done_fd, select.POLLIN)
+        
+            self.irq_thread = threading.Thread(target=self.callback_irq)
+            self.irq_thread.start()
         except:
             traceback.print_exc()
 
     def callback_irq(self):
-        while not self.stop_event.is_set():
-            if self.irq_gpio.event_wait(sec=60):
-                event = self.irq_gpio.event_read()
-                print("IRQ Event detected!")
-                # Call the user-defined callback function
-                self.callbackIRQ(event)
-
-    def setReset(self, state):
-        # Set the reset GPIO to the specified state
-        self.reset_gpio.set_value(state)
-        self.reset_state = state
-
-    def callbackIRQ(self, event):
-        # User-defined callback function when IRQ event occurs
-        print("Custom IRQ Callback", event.type)
+        running = True
+        try:
+            while running:
+                # Wait for a fd to have data
+                # depending on what fd is ready it can be exit event or gpio event
+                for fd, _ in self.poll.poll():
+                    if fd == self.done_fd:
+                        # Exit signal received
+                        running = False
+                        break
+                    elif fd == self.irq_gpio.fd: 
+                        # Blocks until at least one event is available
+                        for event in self.irq_gpio.read_edge_events():
+                            # FIXME: this is hardcoded disabled as it is very annoing
+                            # self.logger.debug(f"line: {event.line_offset} type: Falling event #{event.line_seqno}")
+                            self.interrupt_event.set()
+        except Exception as ex:
+            self.logger.error(ex)
+            self.logger.debug("Customise the example configuration to suit your situation")
+        self.logger.info("background thread exiting...")
 
     def close(self):
-        # Set the stop event to signal the thread to stop
-        self.stop_event.set()
-        # Cleanup GPIOs
-        if self.reset_gpio:
-            self.reset_gpio.release()
-        if self.irq_gpio:
-            self.irq_gpio.release()
+        self.logger.debug("Attempting to close")
+
         # Wait for the IRQ callback thread to finish
-        if self.irq_callback and self.irq_callback.is_alive():
-            self.irq_callback.join()
+        if self.irq_thread.is_alive():
+            # Set the stop event to signal the thread to stop
+            os.eventfd_write(self.done_fd, 1)
+            self.irq_thread.join()
+
+        # Cleanup FD
+        os.close(self.done_fd)
+        # Cleanup GPIOs
+        self.irq_gpio.release()
+        self.logger.debug("Closed")
