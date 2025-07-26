@@ -6,20 +6,20 @@ from typing import List
 
 from config import DeviceConfig, FXSConfig
 from core.device import SiDevice
-from statuses import Linefeed, HookStatus
 from exceptions import RingUnhookException
-
-from devices.si32228 import SI3228x_REGs
+from devices.si3228 import SI3228x_REGs
 from utils.ring_pattern import RingPattern
 from utils.resources import ProSLIC_IRQ2
+from statuses import Linefeed, HookStatus, InterrupFlags
 
 class VoiceChannel:
     
-    def __init__(self, device: SiDevice, channel_id):
+    def __init__(self, channel_id: int, device: SiDevice, fxs_config: FXSConfig):
         self.logger = logging.getLogger("VoiceChannel")
 
-        self.device = device
         self.channel_id = channel_id
+        self.device = device
+        self._fxs_config = fxs_config
 
         # Ring Patterns
         self._ring_patters: List[RingPattern] = []
@@ -35,23 +35,23 @@ class VoiceChannel:
     def getChannelId(self):
         return self.channel_id
     
-    def begin(self, dev_config: DeviceConfig, fxs_config: FXSConfig):
+    def begin(self, dev_config: DeviceConfig, ):
         self.logger.debug(dev_config)
-        self.logger.debug(fxs_config)
+        self.logger.debug(self._fxs_config)
 
         self.device.configureDCFeed(self.channel_id)
         self.device.configureRinger(self.channel_id)
-        self.device.configureZsynth(self.channel_id, fxs_config.impedance)
+        self.device.configureZsynth(self.channel_id, self._fxs_config.impedance)
 
         self.device.configurePCM(self.channel_id, dev_config.audio_codec)
-        self.device.setPCMTimeslot(self.channel_id, fxs_config.audio_slot)
+        self.device.setPCMTimeslot(self.channel_id, self._fxs_config.audio_slot)
 
         self.device.enablePCM(self.channel_id)
         self.setLineFeed(Linefeed.NOP)
-        self.device.setLoopback(self.channel_id, fxs_config.loopback)
+        self.device.setLoopback(self.channel_id, self._fxs_config.loopback)
 
         # Configure Ring Patterns
-        self._ring_patters.append(RingPattern(fxs_config.ring_pattern))
+        self._ring_patters.append(RingPattern(self._fxs_config.ring_pattern))
 
         # Things to do to begin channel
         self.logger.debug("Enable channel by putting in IDLE state")
@@ -68,7 +68,7 @@ class VoiceChannel:
             ProSLIC_IRQ2.IRQ_LOOP_STATUS.value
         )
         # This should reset the device IRQ flags
-        self.device.handleIRQ()
+        self.device.getInterruptChannels()
     
     def close(self):
         # Things to do to clear channel status
@@ -137,7 +137,16 @@ class VoiceChannel:
         else:
             self.logger.warning("Phone is unkooked, cant perform Ring Test")
             return False
-    
+
+    def handle_interrupt(self, flags, timestamp):
+        if InterrupFlags.LOOP in flags:            
+            if self.isRinging():
+                self.stopRing()
+                self.logger.info(f"Stop ringing channel={self.channel_id} hook status changed!")
+
+            hook_status = self.getHookState()
+            self._hook_detector.on_state_changed(timestamp, hook_status)
+
     def _ringerRun(self):
         self.logger.debug("Ringer loop started.")
 
