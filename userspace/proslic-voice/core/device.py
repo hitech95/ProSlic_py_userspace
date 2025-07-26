@@ -3,10 +3,13 @@ import logging
 import fcntl
 import struct
 import threading
+import queue
+
 from abc import ABC, abstractmethod
 from collections import namedtuple
+from typing import Tuple, List, Any
 
-from utils.resources import CHANNEL_COUNT, PROSLIC_RETRIES, ProSLIC_CommonREGs, ProSLIC_CommonRamAddrs, ProSLIC_IRQ2
+from utils.resources import CHANNEL_COUNT, PROSLIC_RETRIES, ProSLIC_CommonREGs, ProSLIC_CommonRamAddrs, ProSLIC_IRQ1, ProSLIC_IRQ2, ProSLIC_IRQ3
 from exceptions import TimeoutError, InitializationError, BlobInvalidError, BlobUploadError, BlobVerifyError, InvalidCalibrationError
 from statuses import Linefeed, InterrupFlags, LineTermination, LoopbackMode, AudioPCMFormat
 
@@ -24,15 +27,28 @@ STRUCT_FMT = "BHI"
 IRQResult = namedtuple("IRQResult", ["IRQ1", "IRQ2", "IRQ3", "IRQ4"])
 
 class SiDevice(ABC):
-    def __init__(self, name, device):
+
+    LOW_TO_HIGH_IRQ_MAP = {
+        ProSLIC_IRQ1.IRQ_FSKBUF_AVAIL: None,  # if not used
+        ProSLIC_IRQ2.IRQ_LOOP_STATUS: InterrupFlags.LOOP,
+        ProSLIC_IRQ2.IRQ_DTMF: InterrupFlags.DTMF,
+        # Add more here as needed
+    }
+    
+    def __init__(self, device_id: Any, name: str, interupt_queue: queue.Queue , device):
         self.logger = logging.getLogger(name)
 
-        self.numChannels = 0
-        self.dev = device
+        self._device_id = device_id
         self.name = name
+        self._interupt_queue = interupt_queue
+        self.dev = device
+
+        self.numChannels = 0
 
         self._lock = threading.Lock()
-        self._interrupt = threading.Event()
+
+    def __str__(self):
+        return f"SiDevice(name={self.name} id={self._device_id})"
 
     # FIXME: 2025 Ghidra: part specific function, global wrapper method exist
     def setup(self):
@@ -455,68 +471,76 @@ class SiDevice(ABC):
     def disableIRQ(self, channel = 0):
         return False
 
-    def hasPendingInterrupt(self):
-        return self._interrupt.is_set()
+    def getInterruptChannels(self, pendingIRQ = None) -> List[Tuple[int, int]]:
+        channels = []
 
-    def _getIRQ(self, channel, pendingRegisters):
-        # pendingRegisters contains what register has a IRQ that is pending
-        results = []
-        pendingRegisters = pendingRegisters & 0x0F
-        for idx, register in enumerate([
-            ProSLIC_CommonREGs.IRQ1,
-            ProSLIC_CommonREGs.IRQ2,
-            ProSLIC_CommonREGs.IRQ3,
-            ProSLIC_CommonREGs.IRQ4
-        ]):
-            value = 0x00
-            # Read IRQn Register only when a previus IRQ0 states has an pending interrupt      
-            if pendingRegisters & (1 << idx):
-                value = self.readRegister(channel, register.value)
-            results.append(value)
-
-        return IRQResult(*results)
-
-    def handleIRQ(self):
-        flags = []
-
-        try:
+        # Try to read status if a provided value is not set
+        if pendingIRQ == None:
             # IRQ0 is shared between channels, so read from Channel 0
             pendingIRQ = self.readRegister(0, ProSLIC_CommonREGs.IRQ0.value)
 
-            if not pendingIRQ:
-                return flags, None
-            
-            self.logger.debug(f"Raised IRQ0: {hex(pendingIRQ)}")
-            
-            # We are supposing chips are up to 2 channel each
-            # Top 4 bit are second channel
+        # No IRQ raised return empty
+        if not pendingIRQ:
+            return []
+        
+        self.logger.debug(f"Raised IRQ0: {hex(pendingIRQ)}")
+        
+        # Process IRQ masks
+        if pendingIRQ & 0x0F:
+            channels.append((0, pendingIRQ & 0x0F))
+        if pendingIRQ & 0xF0:
+            channels.append((1, pendingIRQ & 0xF0 >> 4))
 
-            channel = 0
-            if pendingIRQ & 0x0F:            
-                status = self._getIRQ(channel, pendingIRQ)
-            elif pendingIRQ & 0xF0:
-                channel = 1
-                status = self._getIRQ(channel, pendingIRQ >> 4)
-            else:
-                # No IRQ to process
-                return flags, None
+        return channels       
 
-            # Process flags
-            if status.IRQ2 & ProSLIC_IRQ2.IRQ_LOOP_STATUS.value:
-                flags.append(InterrupFlags.LOOP)
+    def handleIRQ(self, channel, pendingRegisters):
+        flags = []
+
+        # Mask pendingRegisters, we assume shift already happened
+        # pendingRegisters contains what register has a IRQ that is pending
+        pendingRegisters = pendingRegisters & 0x0F
+        if not pendingRegisters:
+            return flags
             
-            return flags, channel
+        self.logger.debug(f"Pending registers: {hex(pendingRegisters)}")
+
+        try:
+            # value = self.readRegister(channel, ProSLIC_CommonREGs.IRQ2.value)
+            # if value & ProSLIC_IRQ2.IRQ_LOOP_STATUS.value:
+            #     if device.getHookState():
+            #         logger.info(f"On Hook channel={channel}")
+            #     else:
+            #         logger.info("Off Hook channel={channel}")
+
+            # Skipping IRQ as it is user set (firmware dependent?)
+            register_enums = [
+                ProSLIC_CommonREGs.IRQ1,
+                ProSLIC_CommonREGs.IRQ2,
+                ProSLIC_CommonREGs.IRQ3,
+            ]
+            interrupt_masks = [ProSLIC_IRQ1, ProSLIC_IRQ2, ProSLIC_IRQ3]
+            for register, register_masks in zip(register_enums, interrupt_masks):
+                # value = 0x00
+                # # Read IRQn Register only when a previus IRQ0 states has an pending interrupt      
+                # if pendingRegisters & (1 << idx):
+                value = self.readRegister(channel, register.value)
+
+                # Skip mapping if no flags are present
+                if not value:
+                    continue
+
+                for irq_mask in register_masks:
+                    # Flag is not set, skip to next mapped element
+                    if not value & irq_mask.value:
+                        continue
+                    # Flag is set map to hi-level flags
+                    flag = self.LOW_TO_HIGH_IRQ_MAP.get(irq_mask)
+                    if flag is not None and flag not in flags:
+                        flags.append(flag)
+
+            return flags
         except Exception as e:
-            self.logger.critical(e)
-        finally:
-            self._interrupt.clear()
-
-
-        # if value & ProSLIC_IRQ2.IRQ_LOOP_STATUS.value:
-        #     if device.getHookState():
-        #         logger.info(f"On Hook channel={channel}")
-        #     else:
-        #         logger.info("Off Hook channel={channel}")    
+            self.logger.exception(e)
 
     def close(self):
         self.reset()

@@ -1,9 +1,15 @@
 import traceback
+import queue
+
 from enum import Enum
+from typing import Any
 
 from core.device import SiDevice
+from core.irq_reader import IrqReader
+from config import DeviceConfig, IRQMode
 from statuses import LineTermination, AudioPCMFormat
-from utils.gpio_manager import GPIOManager
+from irqs.gpio_reader import IRQGPIOReader
+from irqs.char_reader import IRQCharDevReader
 from utils.resources import PROSLIC_RETRIES, ProSLIC_CommonREGs
 
 from blobs.si32282 import Si32282Blob
@@ -11,19 +17,23 @@ from blobs.si32282 import Si32282Blob
 class Si3228x(SiDevice):
     NAME = "PROSLIC_SI3228x"
 
-    def __init__(self, device, irq_gpio = -1):
-        super().__init__(self.NAME, device)
+    def __init__(self, device_id: Any, interupt_queue: queue.Queue, config: DeviceConfig, device):
+        super().__init__(device_id, self.NAME, interupt_queue, device)
 
-        self.gpioManager = None
-        if irq_gpio >= 0:
-            self.gpioManager = GPIOManager("/dev/gpiochip0", irq_gpio, self._interrupt)
+        self._config = config
+        self._irqReader : IrqReader = None
+
+        if config.irq == IRQMode.GPIO:
+            self._irqReader = IRQGPIOReader(self._interupt_queue, device_id, config.irq_gpio, config.irq_gpiochip)
+        elif config.irq == IRQMode.DEVICE:
+            self._irqReader = IRQCharDevReader(self._interupt_queue, device_id, device)
 
     def setup(self):
         try:
             self.logger.debug("setup()")
             
-            if self.gpioManager:
-                self.gpioManager.setup()
+            if self._irqReader:
+                self._irqReader.setup()
 
             super().setup()
 
@@ -84,8 +94,8 @@ class Si3228x(SiDevice):
             return False
     
     def close(self):
-        if self.gpioManager:
-            self.gpioManager.close()
+        if self._irqReader:
+            self._irqReader.close()
         return super().close()
 
     # Chip variant specific vesion add call to ENHANCE

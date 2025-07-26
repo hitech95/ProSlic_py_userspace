@@ -1,3 +1,6 @@
+import queue
+from typing import Any
+
 from core.device import SiDevice
 
 from statuses import LineTermination, AudioPCMFormat
@@ -10,8 +13,8 @@ class DummyDeviceError(DeviceError):
 class DummyDevice(SiDevice):
     NAME = "PROSLIC_DUMMY"
 
-    def __init__(self, device):
-        super().__init__(self.NAME, device)
+    def __init__(self,device_id: Any, interrupt_queue: queue.Queue, device):
+        super().__init__(device_id, self.NAME, interrupt_queue, device)
 
     def setup(self):
         try:
