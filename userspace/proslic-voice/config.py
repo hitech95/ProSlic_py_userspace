@@ -1,18 +1,28 @@
 import os
 import logging
 import traceback
+
 from dataclasses import dataclass
+from enum import Enum
 
 from uci import Uci, UciException, UciExceptionNotFound # pyuci
 
 from statuses import LineTermination, LoopbackMode, AudioPCMFormat
 
+class IRQMode(Enum):
+    NONE = 'none'
+    GPIO = 'gpio'
+    DEVICE = 'device'
+
 @dataclass
 class DeviceConfig:
     path: str
-    gpio_irq: int
+    irq: IRQMode
     audio_codec: AudioPCMFormat
     audio_device: str
+    # Optional
+    irq_gpiochip: str = '/dev/gpiochip0'
+    irq_gpio: int = -1
 
 @dataclass
 class FXSConfig:
@@ -30,6 +40,11 @@ _logger_map = {
     "info": logging.INFO,
     "warning": logging.WARNING,
     "error": logging.ERROR
+}
+_irq_map = {
+    "none": IRQMode.NONE,
+    "gpio": IRQMode.GPIO,
+    "device": IRQMode.DEVICE,
 }
 _codec_map = {
     "pcm": AudioPCMFormat.FMT_PCM,
@@ -111,15 +126,19 @@ class Config:
     
         dev_cfg = self.uc.get_all(self.config_file, device_sections[index])
 
-        audio_codec = _codec_map.get(dev_cfg["audio_codec"].lower())
+        irq = _irq_map.get(dev_cfg.get("irq", 'none').lower())
+
+        audio_codec = _codec_map.get(dev_cfg.get("audio_codec").lower())
         if not audio_codec:
             raise ValueError(f"Unknown audio_codec: {dev_cfg['audio_codec']}")
 
         return DeviceConfig(
             path=dev_cfg["path"],
-            gpio_irq=int(dev_cfg.get("gpio_irq", -1)),
+            irq=irq,
             audio_codec=audio_codec,
             audio_device=dev_cfg["audio_device"],
+            irq_gpiochip=dev_cfg.get("irq_gpiochip", ''),
+            irq_gpio=int(dev_cfg.get("irq_gpio", -1)),
         )
 
     def getFXSConfig(self, index):
@@ -171,6 +190,7 @@ class Config:
             # Add one device configuration
             self.uc.set(self.config_file, dev, "proslic")
             self.uc.set(self.config_file, dev, "path", "/dev/proslic")
+            self.uc.set(self.config_file, dev, "irq", "device")
             self.uc.set(self.config_file, dev, "audio_codec", "pcm")
             self.uc.set(self.config_file, dev, "audio_device", "hw:0,0")
 
