@@ -4,11 +4,12 @@ import time
 
 from typing import List
 
-from config import DeviceConfig, FXSConfig
+from config import DeviceConfig, FXSConfig, HookConfig
 from core.device import SiDevice
 from exceptions import RingUnhookException
 from devices.si3228 import SI3228x_REGs
 from utils.ring_pattern import RingPattern
+from utils.hook_decoder import HookPulseDetector
 from utils.resources import ProSLIC_IRQ2
 from statuses import Linefeed, HookStatus, InterrupFlags
 
@@ -28,6 +29,9 @@ class VoiceChannel:
         self._ringer_thread = None
         self._ringer_stop_event = threading.Event()
         self._ringer_lock = threading.Lock()
+
+        # Hook pulses detector
+        self._hook_detector = HookPulseDetector(fxs_config.hook_config)
 
     def __str__(self):
         return f"VoiceChannel(name={self.device.name} chan={self.channel_id})"
@@ -69,6 +73,11 @@ class VoiceChannel:
         )
         # This should reset the device IRQ flags
         self.device.getInterruptChannels()
+
+        # Start the hook state detector:
+        self._hook_detector.setup(self.getHookState())
+        self._hook_thread = threading.Thread(target=self._hook_run, daemon=True)
+        self._hook_thread.start()
     
     def close(self):
         # Things to do to clear channel status
@@ -92,7 +101,7 @@ class VoiceChannel:
             
             # Create the thread
             self._ringer_stop_event.clear()
-            self._ringer_thread = threading.Thread(target=self._ringerRun, daemon=True)
+            self._ringer_thread = threading.Thread(target=self._ringer_run, daemon=True)
             self._ringer_thread.start()
             self.logger.info("Ringer thread started.")
         pass
@@ -147,7 +156,7 @@ class VoiceChannel:
             hook_status = self.getHookState()
             self._hook_detector.on_state_changed(timestamp, hook_status)
 
-    def _ringerRun(self):
+    def _ringer_run(self):
         self.logger.debug("Ringer loop started.")
 
         state = Linefeed.RINGING
@@ -175,4 +184,9 @@ class VoiceChannel:
             # Ensure the device is stopped no matter what
             self.setLineFeed(Linefeed.IDLE)
             self.logger.debug("Ringer loop exited cleanly.")
+
+    def _hook_run(self, interval=0.05):
+        while True:
+            self._hook_detector.check_timeout()
+            time.sleep(interval)
     

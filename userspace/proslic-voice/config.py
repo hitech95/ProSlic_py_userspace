@@ -15,6 +15,15 @@ class IRQMode(Enum):
     DEVICE = 'device'
 
 @dataclass
+class HookConfig:
+    min_hook_timeout: float
+    min_digit: float
+    max_digit: float
+    min_flash: float
+    max_flash: float
+    min_inter_digit: float
+
+@dataclass
 class DeviceConfig:
     path: str
     irq: IRQMode
@@ -32,6 +41,7 @@ class FXSConfig:
     ring_pattern: str
     tone_busy: str
     tone_dial: str
+    hook_config: HookConfig
     loopback: LoopbackMode = LoopbackMode.NONE  # Optional
 
 # Mapping for Enums
@@ -149,22 +159,33 @@ class Config:
         
         fxs_cfg = self.uc.get_all(self.config_file, fxs_sections[index])        
     
-        impedance = _impedance_map.get(fxs_cfg["impedance"].upper())
+        impedance = _impedance_map.get(fxs_cfg.get('impedance', '').upper())
         if not impedance:
-            raise ValueError(f"Unknown impedance: {fxs_cfg['impedance']}")
+            raise ValueError(f"Unknown impedance: {fxs_cfg.get('impedance')}")
 
         loopback = _loopback_map.get(
             fxs_cfg.get("loopback", "none").lower(),
               LoopbackMode.NONE
         )
 
+        # Optional hook config
+        hook_config = HookConfig(
+            min_hook_timeout = float(fxs_cfg.get("min_hook_timeout", 0.850)),
+            min_digit        = float(fxs_cfg.get("min_digit", 0.020)),
+            max_digit        = float(fxs_cfg.get("max_digit", 0.080)),
+            min_flash        = float(fxs_cfg.get("min_flash", 0.100)),
+            max_flash        = float(fxs_cfg.get("max_flash", 0.800)),
+            min_inter_digit  = float(fxs_cfg.get("min_inter_digit", 0.090)),
+        )
+
         return FXSConfig(
             # name=fxs_cfg["name"],
             audio_slot=int(fxs_cfg.get("audio_slot", 0)),
             impedance=impedance,
-            ring_pattern=fxs_cfg["ring_pattern"],
-            tone_busy=fxs_cfg["tone_busy"],
-            tone_dial=fxs_cfg["tone_dial"],
+            ring_pattern=fxs_cfg.get("ring_pattern"),
+            tone_busy=fxs_cfg.get("tone_busy"),
+            tone_dial=fxs_cfg.get("tone_dial"),
+            hook_config=hook_config,
             loopback=loopback,
         )
 
